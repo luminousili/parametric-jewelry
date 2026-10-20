@@ -1,17 +1,50 @@
 #!/usr/bin/env python3
-"""Parametric bangle (Turkish "bilezik"): plain, burma twist or dimple texture; closed or open cuff
-with ribbed end caps. --target-grams solves the thickness so the piece weighs N grams in the metal.
+"""Parametric bangle (Turkish "bilezik"): plain, burma twist, dimple texture or pierced honeycomb; closed or
+open cuff with ribbed end caps and/or rose-bud terminals. --target-grams solves the thickness so the piece weighs N grams in the metal.
 
 Axes: wrist along Y, bangle in the XZ plane. Angle a means the +X point rotated by a about +Y. Units: mm.
 """
-import argparse, math, sys
+import argparse, functools, math, sys
 import cadquery as cq
 from ring import DOME, METALS, V, Y, band, finish
 
 DIMPLE_PITCH, DIMPLE_R, DIMPLE_DEPTH = 1.6, 0.65, 0.3
+HEX_HOLE, HEX_WEB, HEX_RIM = 0.9, 0.4, 0.7   # hex hole across flats, wall between holes, solid edge strip (mm)
+PETAL = 0.7                                   # petal and sepal wall thickness (mm), a common casting minimum
+X = cq.Vector(1, 0, 0)
 
 
-def build(inner_d, width, thickness, pattern="plain", gap=0.0, caps=0):
+def shell(pts, span, rot, drop, th=PETAL):
+    """One petal or sepal: a thin profile (outer face through pts as (r, y), bud axis = Y) revolved over
+    span degrees, centred on rot, with its top edge cut to a point that falls by drop at the sides."""
+    inner = [(r - th, y) for r, y in reversed(pts)]
+    prof = (cq.Workplane("XY").moveTo(*pts[0]).spline(pts[1:], includeCurrent=True).lineTo(*inner[0])
+            .spline(inner[1:], includeCurrent=True).close())
+    s = prof.revolve(span, (0, 0, 0), (0, 1, 0)).val().rotate(V(), Y, -span / 2)  # centred on +X
+    top, side = pts[-1][1], pts[-1][0] * math.sin(math.radians(min(span / 2, 90)))
+    gable = (cq.Workplane("YZ").polyline([(-100, -50), (top - drop * 50 / side, -50), (top, 0),
+                                          (top - drop * 50 / side, 50), (-100, 50)]).close().extrude(50, both=True).val())
+    return s.intersect(gable).rotate(V(), Y, rot)
+
+
+@functools.lru_cache   # same bud for every thickness step of --target-grams
+def rose(s):
+    """Simplified rose bud of scale s (mm), axis +Z, base at the origin: stem, 5 sepals, 3 outer and
+    2 inner petals, closed core. ponytail: smooth revolved petals; no curled lips or spiral centre."""
+    sc = lambda pts: [(r * s, y * s) for r, y in pts]
+    parts = [cq.Solid.makeCylinder(0.3 * s, 0.55 * s, V(0, -0.5, 0), Y)]                    # stem into the band
+    parts += [shell(sc([(0.32, 0.0), (0.58, 0.2), (0.8, 0.45), (1.0, 0.62)]), 44, 72 * k + 36, 0.4 * s)
+              for k in range(5)]                                                           # pointed sepals, flared out
+    parts += [shell(sc([(0.28, 0.12), (0.6, 0.45), (0.76, 0.95), (0.72, 1.35), (0.88, 1.75)]), 150, 120 * k, 0.3 * s)
+              for k in range(3)]                                                           # outer petals
+    parts += [shell(sc([(0.22, 0.3), (0.45, 0.7), (0.54, 1.1), (0.52, 1.55)]), 230, 60 + 180 * k, 0.2 * s)
+              for k in range(2)]                                                           # inner petals
+    core = cq.Workplane("XY").moveTo(0, 0.2 * s).spline(sc([(0.3, 0.75), (0.2, 1.3)]), includeCurrent=True)
+    parts.append(core.lineTo(0, 1.42 * s).close().revolve(360, (0, 0, 0), (0, 1, 0)).val())
+    return parts[0].fuse(*parts[1:]).rotate(V(), X, 90)                                    # bud axis Y -> +Z
+
+
+def build(inner_d, width, thickness, pattern="plain", gap=0.0, caps=0, roses=False):
     """Returns (metal solid, warnings)."""
     r_in, w, t = inner_d / 2, width, thickness
     span = 360 - math.degrees(gap / r_in)
@@ -37,6 +70,23 @@ def build(inner_d, width, thickness, pattern="plain", gap=0.0, caps=0):
         body, W, T = band(r_in, w, t, span), w, t
 
     tools = []
+    margin = (caps * 1.5 + 1.0 + 1.5 * bool(roses)) if gap else 0.0     # keep patterns clear of the ends
+    if pattern == "hex":
+        # Honeycomb pierced radially through the band, solid rims along both edges. One column of hex
+        # prisms is built, then copied round the arc; all copies are cut in one boolean.
+        # ponytail: straight radial prisms, so the web is ~0.02 mm thinner on the inside face.
+        pitch = HEX_HOLE + HEX_WEB
+        col_pitch, reach = pitch * math.sqrt(3) / 2, w / 2 - HEX_RIM - HEX_HOLE / 2
+        prism = (cq.Workplane("YZ", origin=(r_in - 1, 0, 0)).polygon(6, HEX_HOLE / math.cos(math.pi / 6))
+                 .extrude(t + 2).val().rotate(V(), X, 30))                        # vertices along the arc
+        cols = [[prism.translate(V(0, y * pitch, 0)) for y in range(-20, 21) if abs(y * pitch) <= reach],
+                [prism.translate(V(0, (y + 0.5) * pitch, 0)) for y in range(-20, 20) if abs((y + 0.5) * pitch) <= reach]]
+        rm = r_in + t / 2
+        arc = math.radians(span) * rm - 2 * margin
+        n = int(arc / col_pitch) if gap else int(arc / col_pitch / 2) * 2         # closed ring: even, so it tiles
+        for k in range(n):
+            a = math.degrees((margin + (k + 0.5 * bool(gap)) * arc / n) / rm)
+            tools += [p.rotate(V(), Y, a) for p in cols[k % 2]]
     if pattern == "texture":
         # Hex-packed spherical dimples over the outside face (outer arc of the band profile).
         # ponytail: ~1.6 mm pitch keeps it to a few hundred booleans (~5-10 s); finer needs a mesh workflow.
@@ -44,7 +94,6 @@ def build(inner_d, width, thickness, pattern="plain", gap=0.0, caps=0):
         rho = ((w / 2) ** 2 + e ** 2) / (2 * e)                          # outer arc radius in the profile
         row = DIMPLE_PITCH * 0.866
         rows = int((w - 2 * DIMPLE_R) / row) + 1
-        margin = (caps * 1.5 + 1.0) if gap else 0.0                       # keep clear of the end caps
         for j in range(rows):
             y = (j - (rows - 1) / 2) * row
             rs = r_in + t - rho + math.sqrt(rho ** 2 - y ** 2)           # outer surface radius at this y
@@ -62,11 +111,19 @@ def build(inner_d, width, thickness, pattern="plain", gap=0.0, caps=0):
             for start in (k * pitch_a, span - k * pitch_a - ring_a):
                 collars.append(band(r_in, W + 0.6, T + 0.3, ring_a).rotate(V(), Y, start))
 
+    if gap and roses:
+        # Rose-bud terminal at each open end, bud pointing along the arc into the opening, with a collar ring.
+        ring_a = math.degrees(0.8 / r_in)
+        collars += [band(r_in, W + 0.6, T + 0.3, ring_a), band(r_in, W + 0.6, T + 0.3, ring_a).rotate(V(), Y, span - ring_a)]
+        bud = rose(1.5 * w)                                          # bud ~2.6 band widths long
+        collars += [bud.translate(V(r_in + T / 2, 0, 0)), bud.rotate(V(), X, 180).translate(V(r_in + T / 2, 0, 0)).rotate(V(), Y, span)]
+
     metal = body.fuse(*collars) if collars else body
     metal = metal.cut(*tools) if tools else metal                    # no .clean(): it can break validity
     checks = [
         (t < 0.8, f"thickness {t:.2f} mm is under 0.8 mm"),
         (caps and not gap, "end caps need an open bangle (--open-gap > 0); none made"),
+        (roses and not gap, "rose terminals need an open bangle (--open-gap > 0); none made"),
         (not metal.isValid(), "metal solid is invalid (shape.isValid() is False)"),
     ]
     return metal, [msg for bad, msg in checks if bad]
@@ -91,9 +148,10 @@ def main():
     ap.add_argument("--thickness", type=float, default=1.5, help="ignored when --target-grams is set")
     ap.add_argument("--target-grams", type=float, help="solve thickness for this metal weight")
     ap.add_argument("--metal", choices=METALS, default="22k")
-    ap.add_argument("--pattern", choices=("plain", "twist", "texture"), default="plain")
+    ap.add_argument("--pattern", choices=("plain", "twist", "texture", "hex"), default="plain")
     ap.add_argument("--open-gap", type=float, default=0.0, help="cuff opening in mm (0 = closed)")
     ap.add_argument("--end-caps", type=int, default=0, help="raised rings at each open end")
+    ap.add_argument("--roses", action="store_true", help="rose-bud terminals at the open ends")
     ap.add_argument("--out", default="out/bangle")
     ap.add_argument("--strict", action="store_true", help="exit 1 if any manufacturability warning")
     a = ap.parse_args()
@@ -101,7 +159,7 @@ def main():
         ap.error("dimensions and weights must be positive")
     if a.open_gap >= math.pi * a.inner_diameter * 0.5:
         ap.error("--open-gap must be under half the inner circumference")
-    kw = dict(inner_d=a.inner_diameter, width=a.width, pattern=a.pattern, gap=a.open_gap, caps=a.end_caps)
+    kw = dict(inner_d=a.inner_diameter, width=a.width, pattern=a.pattern, gap=a.open_gap, caps=a.end_caps, roses=a.roses)
     t = solve_thickness(a.target_grams, METALS[a.metal], **kw) if a.target_grams else a.thickness
     metal, warns = build(thickness=t, **kw)
     vol = metal.Volume()
