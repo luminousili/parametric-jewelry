@@ -3,7 +3,7 @@
 Python + CadQuery scripts that generate jewelry from a few numbers. The solitaire ring has a 6-prong crown head with a collar and pavé shoulders. The bangle (Turkish *bilezik*) can be plain, a twist, dimpled or pierced with a honeycomb, closed or an open cuff with rose-bud terminals. Each script writes a manufacturable STEP and STL, an STL of the stones, and a `report.json` with the metal weight and manufacturability warnings.
 
 ![Generated ring](docs/ring-hero.png)
-![Generated bangle: pierced hex cuff with rose-bud terminals](docs/bangle-hero.png)
+![Generated bangle: hollow tube cuff with inner honeycomb and facing rose-bud terminals](docs/bangle-hero.png)
 
 | Original Rhino/Matrix Gold render | Generated from code |
 |---|---|
@@ -18,7 +18,7 @@ More ring variants: [docs/ring-variants.png](docs/ring-variants.png). The left i
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -r requirements.txt
 .venv/bin/python ring.py --size-us 6 --stone-mm 6.5 --prongs 6      # -> out/ring.step, ring.stl, stone.stl, report.json
-.venv/bin/python bangle.py --width 5 --pattern hex --open-gap 40 --roses --target-grams 35   # ~80 s
+.venv/bin/python bangle.py --width 4 --pattern hex --open-gap 40 --roses --target-grams 48   # ~3 min
 .venv/bin/python test_ring.py                                        # plain asserts, ~2 min
 ```
 
@@ -60,12 +60,12 @@ Example `out/report.json` (default ring, 18k):
 | `--width` / `--thickness` | 6 / 1.5 | mm |
 | `--target-grams` | none | Solve the thickness by bisection so the finished piece (including texture and caps) weighs this much |
 | `--metal` | 22k | Same metals as the ring |
-| `--pattern` | plain | `plain`, `twist` (burma twist), `texture` (hex-packed dimples) or `hex` (honeycomb pierced through the band, solid rims along both edges) |
+| `--pattern` | plain | `plain`, `twist` (burma twist), `texture` (hex-packed dimples) or `hex` (hollow round tube, 4 mm → 6 mm toward the ends; honeycomb cut through the inner wall only, outer face smooth; `--thickness` is the tube wall) |
 | `--open-gap` | 0 | Cuff opening in mm (0 = closed) |
 | `--end-caps` | 0 | Raised rings at each open end |
-| `--roses` | off | Rose-bud terminal at each open end: calyx of 5 pointed sepals, 3 outer and 2 inner petals, a core, and a collar ring |
+| `--roses` | off | Rose-bud terminal at each open end: calyx of 5 pointed sepals, 3 outer and 2 inner petals, a core, and a collar ring. The two buds face each other across the opening |
 
-The solved thickness and weight go into `report.json`. A thickness under 0.8 mm produces a warning. Example: the hero cuff (22k, 5 mm wide, hex piercing, 40 mm opening, roses), targeting 35 g, solves to 1.97 mm and 34.96 g. The holes and the roses are part of the weighed solid. The hex solve takes about 80 seconds and the dimpled one about 2–3 minutes, because every bisection step rebuilds the cuts. A plain solve takes about 2 seconds.
+The solved thickness and weight go into `report.json`. A thickness under 0.8 mm produces a warning. Example: the hero cuff (22k, 4 mm hollow tube, inner honeycomb, 40 mm opening, roses), targeting 48 g, solves to a 0.96 mm wall and 48.03 g. The holes and the roses are part of the weighed solid. The hex tube solve takes about 3 minutes and the dimpled one about 2–3 minutes, because every bisection step rebuilds the cuts. A plain solve takes about 2 seconds.
 
 ## Regenerating the previews
 
@@ -75,7 +75,7 @@ The previews are rendered with Blender (headless Cycles):
 .venv/bin/python ring.py --out out/ring-hero
 .venv/bin/python ring.py --prongs 4 --pave 0 --out out/ring-us6
 .venv/bin/python ring.py --size-us 7 --stone-mm 8 --band-width 2.6 --pave 6 --pave-mm 1.5 --out out/ring-us7
-.venv/bin/python bangle.py --width 5 --pattern hex --open-gap 40 --roses --target-grams 35 --out out/bangle-rose
+.venv/bin/python bangle.py --width 4 --pattern hex --open-gap 40 --roses --target-grams 48 --out out/bangle-rose
 .venv/bin/python bangle.py --pattern texture --open-gap 25 --end-caps 3 --target-grams 20 --out out/bangle-cuff
 .venv/bin/python bangle.py --target-grams 20 --out out/bangle-plain
 .venv/bin/python bangle.py --pattern twist --width 3.5 --thickness 2.5 --out out/bangle-twist
@@ -91,8 +91,9 @@ blender -b -P render.py -- docs/bangles.png --tilt=30 out/bangle-cuff/bangle.stl
 - The 45° prong-lean check is a rule of thumb, not a stress analysis.
 - The "platinum" density (21.45) is pure platinum. Pt950 is about 20.1–20.7 g/cm³.
 - The twist bangle keeps the section diagonal at the inner diameter, so the bore is slightly larger where the flats face inward.
-- The rose buds are smooth revolved petals with pointed tips. The curled petal lips and the spiral centre of the reference are not modelled. The reference band is a round tube, while this one keeps the comfort-fit band profile.
-- The hex holes are straight radial prisms (0.9 mm across flats, 0.4 mm walls), so the walls are slightly thinner on the inside face. The dimple texture is coarse (1.6 mm pitch).
+- The rose buds are smooth revolved petals with pointed tips. The curled petal lips and the spiral centre of the reference are not modelled.
+- The hex tube is lofted through circles every ~25°, so its centre line is a spline, not a true arc. The taper (4 → 6 mm, cubic) is a guess from the photo. A closed hex bangle keeps a constant diameter. If the wall is within 0.15 mm of the tube radius the tube is solid and the holes become blind pockets.
+- The hex holes are straight radial prisms (0.9 mm across flats, 0.4 mm walls) in fixed rows, so the honeycomb does not follow the taper and shows less than in the reference. The dimple texture is coarse (1.6 mm pitch).
 - `.clean()` is skipped on the final solids because it made them invalid. The STL exports are not guaranteed watertight, but their volume matches the B-rep.
 
 ## About

@@ -28,9 +28,9 @@ assert abs(grams - 15.0) / 15.0 < 0.01, grams
 assert b.isValid() and warns == [], warns
 assert bangle.build(62, 3.5, 2.5, "twist")[0].isValid()
 
-# Pierced hex cuff with rose terminals: the solve includes the holes and roses, and the solid stays valid
-kw = dict(inner_d=62, width=5, pattern="hex", gap=40, roses=True)
-b = bangle.build(thickness=bangle.solve_thickness(30.0, ring.METALS["22k"], **kw), **kw)[0]
-assert b.isValid() and abs(b.Volume() / 1000 * ring.METALS["22k"] - 30.0) / 30.0 < 0.01, b.Volume()
+# Hollow hex tube cuff with rose terminals: the wall solve includes the holes and roses, and the solid stays valid
+kw = dict(inner_d=62, width=4, pattern="hex", gap=40, roses=True)
+b = bangle.build(thickness=bangle.solve_thickness(40.0, ring.METALS["22k"], **kw), **kw)[0]
+assert b.isValid() and abs(b.Volume() / 1000 * ring.METALS["22k"] - 40.0) / 40.0 < 0.01 and len(b.Solids()) == 1, b.Volume()
 
 print("all tests passed")
